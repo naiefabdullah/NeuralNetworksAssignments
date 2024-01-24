@@ -1,1 +1,1 @@
-# NeuralNetworksAssignments
+Digit Recognition with Simple Perceptron
