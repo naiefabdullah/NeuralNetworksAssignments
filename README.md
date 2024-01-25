@@ -5,7 +5,9 @@ This project involves the implementation of a multi-class perceptron model using
 
 ## Features
 Multi-Class Classification: Implements one-vs-all strategy to classify digits from 0 to 9.
+
 Sigmoid Activation Function: Utilizes the sigmoid function for smooth, differentiable binary classification within each perceptron.
+
 Digit Image Preprocessing: Includes image resizing and normalization for efficient training.
 
 ## Dataset
@@ -19,8 +21,11 @@ OpenCV (cv2)
 
 ## Implementation Details
 Neuron: Class representing a single neuron with forward pass capability.
+
 Sigmoid: Sigmoid activation function for binary classification.
+
 InputData: Class for loading and preprocessing the dataset.
+
 Training and Testing: Classes for training the model using gradient descent and testing its accuracy.
 The model is trained separately for each digit (0-9) using the one-vs-all strategy.
 
