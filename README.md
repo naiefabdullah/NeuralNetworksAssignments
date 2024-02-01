@@ -1,1 +1,1 @@
-# NeuralNetworksAssignments
+HW to Chapter 4, 5 “One Hidden Layer” (combined for chapters 4 and 5)
