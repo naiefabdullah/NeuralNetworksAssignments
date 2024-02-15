@@ -1,157 +1,109 @@
 import numpy as np
 
-def relu(Z):
-    return np.maximum(0, Z)
+class Parameters:
+    def __init__(self, layer_sizes):
+        self.weights = {}
+        self.bias = {}
+        for i in range(1, len(layer_sizes)):
+            self.weights[i] = np.random.randn(layer_sizes[i], layer_sizes[i-1]) * 0.01
+            self.bias[i] = np.zeros((layer_sizes[i], 1))
 
-def sigmoid(Z):
-    return 1 / (1 + np.exp(-Z))
+    def update_parameters(self, grads, learning_rate):
+        L = len(self.weights)
+        for l in range(1, L + 1):
+            self.weights[l] -= learning_rate * grads["dW" + str(l)]
+            self.bias[l] -= learning_rate * grads["dB" + str(l)]
 
-def relu_deriv(Z):
-    return Z > 0
+class Activation:
+    def __init__(self, activation_type):
+        self.type = activation_type
 
-def sigmoid_deriv(A):
-    return A * (1 - A)
+    def forward(self, Z):
+        if self.type == "relu":
+            return np.maximum(0, Z)
+        elif self.type == "sigmoid":
+            return 1 / (1 + np.exp(-Z))
+        raise ValueError("Invalid activation function type: {}".format(self.type))
 
-def softmax(Z):
-    e_Z = np.exp(Z - np.max(Z, axis=0, keepdims=True))
-    return e_Z / e_Z.sum(axis=0, keepdims=True)
+    def backward(self, dA, Z):
+        if self.type == "relu":
+            dZ = np.array(dA, copy=True)
+            dZ[Z <= 0] = 0
+            return dZ
+        elif self.type == "sigmoid":
+            s = 1 / (1 + np.exp(-Z))
+            return dA * s * (1 - s)
+        raise ValueError("Invalid activation function type: {}".format(self.type))
 
-def compute_cross_entropy_loss(A, Y):
-    m = Y.shape[1]
-    logprobs = np.log(A) * Y
-    loss = - np.sum(logprobs) / m
-    return loss
+class Layer:
+    def __init__(self, input_size, output_size, activation_type):
+        self.W = np.random.randn(output_size, input_size) * 0.01
+        self.b = np.zeros((output_size, 1))
+        self.activation = Activation(activation_type)
 
-def initialize_parameters(layer_dims):
-    parameters = {}
-    L = len(layer_dims)           
+    def forward(self, A_prev):
+        self.Z = np.dot(self.W, A_prev) + self.b
+        self.A = self.activation.forward(self.Z)
+        self.A_prev = A_prev
+        return self.A
 
-    for l in range(1, L):
-        parameters['W' + str(l)] = np.random.randn(layer_dims[l], layer_dims[l-1]) * 0.01
-        parameters['b' + str(l)] = np.zeros((layer_dims[l], 1))
-        
-    return parameters
+    def backward(self, dA):
+        dZ = self.activation.backward(dA, self.Z)
+        m = dA.shape[1]
+        dW = np.dot(dZ, self.A_prev.T) / m
+        dB = np.sum(dZ, axis=1, keepdims=True) / m
+        dA_prev = np.dot(self.W.T, dZ)
+        return dA_prev, dW, dB
 
-def linear_forward(A, W, b):
-    Z = W.dot(A) + b
-    cache = (A, W, b)
-    return Z, cache
+class NeuralNetwork:
+    def __init__(self, layer_sizes, activation_types):
+        self.layers = [Layer(layer_sizes[i], layer_sizes[i+1], activation_types[i]) for i in range(len(layer_sizes)-1)]
+        self.L = len(self.layers)
 
-def linear_activation_forward(A_prev, W, b, activation):
-    if activation == "sigmoid":
-        Z, linear_cache = linear_forward(A_prev, W, b)
-        A = sigmoid(Z)
-    elif activation == "relu":
-        Z, linear_cache = linear_forward(A_prev, W, b)
-        A = relu(Z)
-    elif activation == "softmax":
-        Z, linear_cache = linear_forward(A_prev, W, b)
-        A = softmax(Z)
-        
-    cache = (linear_cache, Z)
-    return A, cache
+    def forward_propagation(self, X):
+        A = X
+        for layer in self.layers:
+            A = layer.forward(A)
+        return A
 
-def forward_propagation(X, parameters):
-    caches = []
-    A = X
-    L = len(parameters) // 2                 
+    def compute_cost(self, AL, Y):
+        m = Y.shape[1]
+        cost = -np.sum(Y * np.log(AL) + (1 - Y) * np.log(1 - AL)) / m
+        cost = np.squeeze(cost)
+        return cost
 
-    for l in range(1, L):
-        A_prev = A 
-        A, cache = linear_activation_forward(A_prev, parameters['W' + str(l)], parameters['b' + str(l)], "relu")
-        caches.append(cache)
-    
-    AL, cache = linear_activation_forward(A, parameters['W' + str(L)], parameters['b' + str(L)], "softmax")
-    caches.append(cache)
-            
-    return AL, caches
+    def backward_propagation(self, Y):
+        grads = {}
+        dAL = - (np.divide(Y, self.layers[-1].A) - np.divide(1 - Y, 1 - self.layers[-1].A))
+        dA = dAL
+        for l in reversed(range(self.L)):
+            dA, dW, dB = self.layers[l].backward(dA)
+            grads["dW" + str(l+1)] = dW
+            grads["dB" + str(l+1)] = dB
+        return grads
 
-def linear_backward(dZ, cache):
-    A_prev, W, b = cache
-    m = A_prev.shape[1]
+    def update_parameters(self, grads, learning_rate):
+        for l in range(self.L):
+            self.layers[l].W -= learning_rate * grads["dW" + str(l+1)]
+            self.layers[l].b -= learning_rate * grads["dB" + str(l+1)]
 
-    dW = 1./m * np.dot(dZ, A_prev.T)
-    db = 1./m * np.sum(dZ, axis=1, keepdims=True)
-    dA_prev = np.dot(W.T, dZ)
-    
-    return dA_prev, dW, db
+    def train(self, X, Y, learning_rate=0.001, num_iterations=3000, print_cost=True):
+        for i in range(num_iterations):
+            AL = self.forward_propagation(X)
+            cost = self.compute_cost(AL, Y)
+            grads = self.backward_propagation(Y)
+            self.update_parameters(grads, learning_rate)
+            if print_cost and i % 100 == 0:
+                print("Cost after iteration %i: %f" %(i, cost))
 
-def linear_activation_backward(dA, cache, activation):
-    linear_cache, activation_cache = cache
-    
-    if activation == "relu":
-        dZ = relu_deriv(activation_cache) * dA
-        dA_prev, dW, db = linear_backward(dZ, linear_cache)
-        
-    elif activation == "sigmoid":
-        dZ = sigmoid_deriv(activation_cache) * dA
-        dA_prev, dW, db = linear_backward(dZ, linear_cache)
-    
-    return dA_prev, dW, db
-
-def backward_propagation(AL, Y, caches):
-    grads = {}
-    L = len(caches)  # the number of layers
-    m = AL.shape[1]
-    Y = Y.reshape(AL.shape)  # after this line, Y is the same shape as AL
-
-    # Initializing the backpropagation for the last layer (softmax/cross-entropy)
-    current_cache = caches[-1]
-    linear_cache, activation_cache = current_cache
-    dZ = AL - Y  # Derivative of cross-entropy loss with softmax
-    dA_prev, dW, db = linear_backward(dZ, linear_cache)
-    grads["dA" + str(L-1)] = dA_prev
-    grads["dW" + str(L)] = dW
-    grads["db" + str(L)] = db
-
-    # Loop from l=L-2 to l=0
-    for l in reversed(range(L-1)):
-        # lth layer: (RELU -> LINEAR) gradients.
-        current_cache = caches[l]
-        dA_prev_temp, dW_temp, db_temp = linear_activation_backward(grads["dA" + str(l+1)], current_cache, "relu")
-        grads["dA" + str(l)] = dA_prev_temp
-        grads["dW" + str(l + 1)] = dW_temp
-        grads["db" + str(l + 1)] = db_temp
-
-    return grads
-
-
-def update_parameters(parameters, grads, learning_rate):
-    L = len(parameters) // 2 
-
-    for l in range(L):
-        parameters["W" + str(l+1)] -= learning_rate * grads["dW" + str(l+1)]
-        parameters["b" + str(l+1)] -= learning_rate * grads["db" + str(l+1)]
-        
-    return parameters
-
-def model(X, Y, layers_dims, learning_rate = 0.0075, num_iterations = 3000, print_cost=False):
-    np.random.seed(1)
-    costs = []                        
-    
-    parameters = initialize_parameters(layers_dims)
-    
-    for i in range(0, num_iterations):
-
-        AL, caches = forward_propagation(X, parameters)
-        
-        cost = compute_cross_entropy_loss(AL, Y)
-        
-        grads = backward_propagation(AL, Y, caches)
-        
-        parameters = update_parameters(parameters, grads, learning_rate)
-                
-        if print_cost and i % 100 == 0:
-            print ("Cost after iteration %i: %f" %(i, cost))
-            costs.append(cost)
-            
-    return parameters
-
-# Define the deep neural network structure (example: 2 inputs, 3 hidden layers with [4, 3, 2] neurons, and 2 outputs)
-layers_dims = [2, 4, 3, 2, 2]  #  4-layer model
+# Example usage:
+layer_sizes = [2, 4, 3, 1]  # Example: 2 inputs, two hidden layers with 4 and 3 neurons, and 1 output
+activation_types = ["relu", "relu", "sigmoid"]  # Relu for hidden layers, Sigmoid for output
+network = NeuralNetwork(layer_sizes, activation_types)
 
 # Generate example data
 X = np.random.randn(2, 1000)  # Example input
-Y = np.random.randint(0, 2, (2, 1000))  # Example output for 2 classes
+Y = np.random.randint(0, 2, (1, 1000))  # Example output for binary classification
 
-parameters = model(X, Y, layers_dims, num_iterations=2500, print_cost=True)
+# Train the network
+network.train(X, Y, learning_rate=0.001, num_iterations=2500)
