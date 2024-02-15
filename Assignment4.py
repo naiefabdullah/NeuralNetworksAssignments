@@ -19,13 +19,23 @@ class Activation:
         self.type = activation_type
 
     def forward(self, Z):
+        if self.type == "linear":
+            return Z  # Linear activation function simply returns the input
         if self.type == "relu":
             return np.maximum(0, Z)
         elif self.type == "sigmoid":
             return 1 / (1 + np.exp(-Z))
-        raise ValueError("Invalid activation function type: {}".format(self.type))
+        elif self.type == "tanh":
+            return np.tanh(Z)
+        elif self.type == "softmax":
+            e_Z = np.exp(Z - np.max(Z, axis=0, keepdims=True))
+            return e_Z / np.sum(e_Z, axis=0, keepdims=True)
+        else:
+            raise ValueError("Invalid activation function type: {}".format(self.type))
 
     def backward(self, dA, Z):
+        if self.type == "linear":
+            return dA  # Derivative of a linear function is 1
         if self.type == "relu":
             dZ = np.array(dA, copy=True)
             dZ[Z <= 0] = 0
@@ -33,7 +43,11 @@ class Activation:
         elif self.type == "sigmoid":
             s = 1 / (1 + np.exp(-Z))
             return dA * s * (1 - s)
-        raise ValueError("Invalid activation function type: {}".format(self.type))
+        elif self.type == "tanh":
+            t = np.tanh(Z)
+            return dA * (1 - t**2)
+        else:
+            raise ValueError("Invalid activation function type for backward pass: {}".format(self.type))
 
 class Layer:
     def __init__(self, input_size, output_size, activation_type):
@@ -59,6 +73,7 @@ class NeuralNetwork:
     def __init__(self, layer_sizes, activation_types):
         self.layers = [Layer(layer_sizes[i], layer_sizes[i+1], activation_types[i]) for i in range(len(layer_sizes)-1)]
         self.L = len(self.layers)
+        self.is_softmax_output = activation_types[-1] == "softmax"
 
     def forward_propagation(self, X):
         A = X
@@ -68,7 +83,10 @@ class NeuralNetwork:
 
     def compute_cost(self, AL, Y):
         m = Y.shape[1]
-        cost = -np.sum(Y * np.log(AL) + (1 - Y) * np.log(1 - AL)) / m
+        if self.is_softmax_output:
+            cost = -np.mean(np.sum(Y * np.log(AL + 1e-8), axis=0))  # Adding epsilon for numerical stability
+        else:
+            cost = -np.sum(Y * np.log(AL + 1e-8) + (1 - Y) * np.log(1 - AL + 1e-8)) / m  # Adding epsilon for numerical stability
         cost = np.squeeze(cost)
         return cost
 
@@ -106,4 +124,4 @@ X = np.random.randn(2, 1000)  # Example input
 Y = np.random.randint(0, 2, (1, 1000))  # Example output for binary classification
 
 # Train the network
-network.train(X, Y, learning_rate=0.001, num_iterations=2500)
+network.train(X, Y, learning_rate=0.0001, num_iterations=2500)
