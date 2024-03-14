@@ -1,0 +1,219 @@
+import numpy as np
+import math
+from PIL import Image
+import os
+
+
+class Activation:
+    def __init__(self, activation_type):
+        self.type = activation_type
+
+    def forward(self, Z):
+        if self.type == "linear":
+            return Z
+        elif self.type == "relu":
+            return np.maximum(0, Z)
+        elif self.type == "sigmoid":
+            return 1 / (1 + np.exp(-Z))
+        elif self.type == "tanh":
+            return np.tanh(Z)
+        elif self.type == "softmax":
+            e_Z = np.exp(Z - np.max(Z, axis=0, keepdims=True))
+            return e_Z / np.sum(e_Z, axis=0, keepdims=True)
+        else:
+            raise ValueError("Invalid activation function type: {}".format(self.type))
+
+    def backward(self, dA, Z):
+        if self.type == "linear":
+            return dA
+        elif self.type == "relu":
+            dZ = np.array(dA, copy=True)
+            dZ[Z <= 0] = 0
+            return dZ
+        elif self.type == "sigmoid":
+            s = 1 / (1 + np.exp(-Z))
+            return dA * s * (1 - s)
+        elif self.type == "tanh":
+            t = np.tanh(Z)
+            return dA * (1 - t**2)
+        else:
+            raise ValueError("Invalid activation function type for backward pass: {}".format(self.type))
+
+class Layer:
+    def __init__(self, input_size, output_size, activation_type):
+        self.W = np.random.randn(output_size, input_size) * 0.01
+        self.b = np.zeros((output_size, 1))
+        self.activation = Activation(activation_type)
+        self.dropout_mask = None
+        self.keep_prob = 1
+
+    def forward(self, A_prev, keep_prob=1):
+        self.Z = np.dot(self.W, A_prev) + self.b
+        self.A = self.activation.forward(self.Z)
+        if keep_prob < 1:
+            self.dropout_mask = np.random.rand(*self.A.shape) < keep_prob
+            self.A *= self.dropout_mask
+            self.A /= keep_prob
+        self.keep_prob = keep_prob
+        self.A_prev = A_prev
+        return self.A
+
+    def backward(self, dA, lambd=0.0):
+        if self.keep_prob < 1:
+            dA *= self.dropout_mask
+            dA /= self.keep_prob
+
+        dZ = self.activation.backward(dA, self.Z)
+        m = dA.shape[1]
+        dW = np.dot(dZ, self.A_prev.T) / m + (lambd / m) * self.W
+        dB = np.sum(dZ, axis=1, keepdims=True) / m
+        dA_prev = np.dot(self.W.T, dZ)
+        return dA_prev, dW, dB
+
+class Preprocessor:
+    def __init__(self):
+        self.mean = None
+        self.std = None
+
+    def fit(self, X):
+        self.mean = np.mean(X, axis=1, keepdims=True)
+        self.std = np.std(X, axis=1, keepdims=True)
+
+    def transform(self, X):
+        X_normalized = (X - self.mean) / (self.std + 1e-8)
+        return X_normalized
+
+    def fit_transform(self, X):
+        self.fit(X)
+        return self.transform(X)
+
+class NeuralNetwork:
+    def __init__(self, layer_sizes, activation_types):
+        self.layers = [Layer(layer_sizes[i], layer_sizes[i+1], activation_types[i]) for i in range(len(layer_sizes)-1)]
+        self.L = len(self.layers)
+        self.is_softmax_output = activation_types[-1] == "softmax"
+        self.preprocessor = Preprocessor()
+
+    def forward_propagation(self, X, keep_prob=1.0):
+        A = X
+        for layer in self.layers:
+            A = layer.forward(A, keep_prob=keep_prob)
+        return A
+
+    def compute_cost(self, AL, Y, lambd=0.0):
+        m = Y.shape[1]
+        epsilon = 1e-8
+        AL_clipped = np.clip(AL, epsilon, 1 - epsilon)
+        if self.is_softmax_output:
+            cost = -np.mean(np.sum(Y * np.log(AL_clipped), axis=0))
+        else:
+            cost = -np.sum(Y * np.log(AL_clipped) + (1 - Y) * np.log(1 - AL_clipped)) / m
+        L2_cost = 0
+        if lambd > 0:
+            L2_cost = (lambd / (2 * m)) * sum([np.sum(np.square(layer.W)) for layer in self.layers])
+        cost = cost + L2_cost
+        return np.squeeze(cost)
+
+    def backward_propagation(self, Y, lambd=0.0):
+        grads = {}
+        epsilon = 1e-8
+        AL = np.clip(self.layers[-1].A, epsilon, 1 - epsilon)
+        if self.is_softmax_output:
+            dAL = self.layers[-1].A - Y
+        else:
+            dAL = - (np.divide(Y, AL) - np.divide(1 - Y, 1 - AL))
+        dA = dAL
+        for l in reversed(range(self.L)):
+            dA, dW, dB = self.layers[l].backward(dA, lambd=lambd)
+            grads["dW" + str(l+1)] = dW
+            grads["dB" + str(l+1)] = dB
+        return grads
+
+    def update_parameters(self, grads, learning_rate):
+        for l in range(self.L):
+            self.layers[l].W -= learning_rate * grads["dW" + str(l+1)]
+            self.layers[l].b -= learning_rate * grads["dB" + str(l+1)]
+
+    def create_mini_batches(self, X, Y, mini_batch_size):
+        m = X.shape[1]
+        mini_batches = []
+        
+        permutation = list(np.random.permutation(m))
+        shuffled_X = X[:, permutation]
+        shuffled_Y = Y[:, permutation].reshape((1, m))
+        
+        num_complete_minibatches = math.floor(m/mini_batch_size)
+        for k in range(0, num_complete_minibatches):
+            mini_batch_X = shuffled_X[:, k*mini_batch_size : (k+1)*mini_batch_size]
+            mini_batch_Y = shuffled_Y[:, k*mini_batch_size : (k+1)*mini_batch_size]
+            mini_batches.append((mini_batch_X, mini_batch_Y))
+        
+        if m % mini_batch_size != 0:
+            mini_batch_X = shuffled_X[:, num_complete_minibatches*mini_batch_size:]
+            mini_batch_Y = shuffled_Y[:, num_complete_minibatches*mini_batch_size:]
+            mini_batches.append((mini_batch_X, mini_batch_Y))
+        
+        return mini_batches
+
+    def train(self, X, Y, learning_rate=0.001, num_iterations=3000, print_cost=True, lambd=0.0, keep_prob=1.0, mini_batch_size=64):
+        X_norm = self.preprocessor.fit_transform(X)
+        for i in range(num_iterations):
+            minibatches = self.create_mini_batches(X_norm, Y, mini_batch_size)
+            cost_total = 0
+            
+            for minibatch in minibatches:
+                (minibatch_X, minibatch_Y) = minibatch
+                AL = self.forward_propagation(minibatch_X, keep_prob=keep_prob)
+                cost_total += self.compute_cost(AL, minibatch_Y, lambd=lambd)
+                grads = self.backward_propagation(minibatch_Y, lambd=lambd)
+                self.update_parameters(grads, learning_rate)
+            
+            cost_avg = cost_total / len(minibatches)
+            
+            if print_cost and i % 100 == 0:
+                print(f"Cost after iteration {i}: {cost_avg}")
+
+# Image Preprocessing Function and generating labels
+def load_images_and_labels(base_directory, target_size=(28, 28)):
+    categories = ['WithMask', 'WithoutMask']
+    num_categories = len(categories)
+    
+    # Placeholder lists to hold image data and labels
+    images = []
+    labels = []
+    
+    for label, category in enumerate(categories):
+        directory = os.path.join(base_directory, category)
+        image_files = [f for f in os.listdir(directory) if f.endswith(('.png', '.jpg', '.jpeg'))]
+        
+        for filename in image_files:
+            img_path = os.path.join(directory, filename)
+            img = Image.open(img_path).convert('L')  # Convert to grayscale
+            img = img.resize(target_size)
+            img_array = np.asarray(img).flatten() / 255.0
+            
+            images.append(img_array)
+            labels.append(label)  # 0 for WithoutMask, 1 for WithMask
+            
+    # Convert lists to numpy arrays
+    X = np.array(images).T  # Transpose to match the expected shape (num_features, num_samples)
+    Y = np.array(labels).reshape(1, -1)  # Reshape labels to match the expected shape (1, num_samples)
+    
+    return X, Y
+
+# Example Usage
+base_directory = "/Users/naiefabdullahshakil/Downloads/Face Mask Dataset/Train"
+X, Y = load_images_and_labels(base_directory, target_size=(28, 28))
+
+# Verify shapes
+print("X shape:", X.shape)  # Expected shape: (num_features, num_samples)
+print("Y shape:", Y.shape)  # Expected shape: (1, num_samples)
+
+# Initialize the neural network
+input_features = 28 * 28  # Adjust based on your target_size
+layer_sizes = [input_features, 10, 8, 8, 4, 1]
+activation_types = ["relu", "relu", "relu", "relu", "sigmoid"]
+network = NeuralNetwork(layer_sizes, activation_types)
+
+# Train the network
+network.train(X, Y, learning_rate=0.0001, num_iterations=8000, print_cost=True, lambd=0.7, keep_prob=0.8, mini_batch_size=64)
